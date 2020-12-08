@@ -32,6 +32,9 @@ class SemanticError(Error):
     pass
 
 
+
+
+
 ###############################################################################
 #                                                                             #
 #  LEXER                                                                      #
@@ -61,17 +64,16 @@ class TokenType(Enum):
     RBRACK        = ']'
     QUOTE        = '\''
     # block of reserved words
-    PROGRAM       = 'PROGRAM'  #start --see _build_reserved_keywords function for detail
+    PROGRAM       = 'PROGRAM'  #start --see _build_reserved_keywords function for details
     INTEGER       = 'INTEGER'
     REAL          = 'REAL'
+    CHAR          = 'CHAR'
     INTEGER_DIV   = 'DIV'
     VAR           = 'VAR'
     PROCEDURE     = 'PROCEDURE'
     BEGIN         = 'BEGIN'
     AND           = 'AND'
-    ANDTHEN       = 'AND THEN'
     ARRAY         = 'ARRAY'
-    CHAR          = 'CHAR'
     MOD           = 'MOD'
     DO            = 'DO'
     ELSE          = 'ELSE'
@@ -92,6 +94,7 @@ class TokenType(Enum):
     INTEGER_CONST = 'INTEGER_CONST'
     REAL_CONST    = 'REAL_CONST'
     STRING_CONST  = 'STRING_CONST'
+    CHAR_CONST    = 'CHAR_CONST'
     ASSIGN        = ':='
     EOF           = 'EOF'
 
@@ -212,8 +215,6 @@ class Lexer:
         token = Token(type=None, value=None, lineno=self.lineno, column=self.column)
         result = ''
 
-
-
         while self.current_char is not None and self.current_char != '\'':
             result += self.current_char
             self.advance()
@@ -307,6 +308,24 @@ class Lexer:
         # EOF (end-of-file) token indicates that there is no more
         # input left for lexical analysis
         return Token(type=TokenType.EOF, value=None)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ###############################################################################
@@ -494,7 +513,7 @@ class Parser:
 
         self.eat(TokenType.COLON)
         type_node = self.type_spec()
-
+        #print(param_tokens)
         for param_token in param_tokens:
             param_node = Param(Var(param_token), type_node)
             param_nodes.append(param_node)
@@ -558,17 +577,23 @@ class Parser:
         return proc_decl
 
     def type_spec(self):
+        #TODO: Add char type
         """type_spec : INTEGER
                      | REAL
+                     | CHAR
                      | STRING_CONST
         """
         token = self.current_token
         if self.current_token.type == TokenType.INTEGER:
             self.eat(TokenType.INTEGER)
+        elif self.current_token.type == TokenType.REAL:
+            self.eat(TokenType.REAL)
+        elif self.current_token.type == TokenType.CHAR:
+            self.eat(TokenType.CHAR)
         elif self.current_token.type == TokenType.STRING_CONST:
             self.eat(TokenType.STRING_CONST)
-        else:
-            self.eat(TokenType.REAL)
+        # else:
+        #     self.eat(TokenType.REAL)
         node = Type(token)
         return node
 
@@ -603,7 +628,7 @@ class Parser:
 
 
     def get_io_parameter(self, io):
-
+        #TODO: Change it so read and readln take in parameters
         if not self.current_token.type == TokenType.STRING_CONST:
             return []
 
@@ -659,6 +684,7 @@ class Parser:
 
 
     def statement(self):
+        #TODO: add if, if/else, while statements
         """
         statement : compound_statement
                   | proccall_statement
@@ -843,6 +869,23 @@ class Parser:
         return node
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ###############################################################################
 #                                                                             #
 #  Abstract Syntax Tree visitor                                               #
@@ -857,6 +900,19 @@ class NodeVisitor:
 
     def generic_visit(self, node):
         raise Exception('No visit_{} method'.format(type(node).__name__))
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ###############################################################################
@@ -898,6 +954,20 @@ class BuiltinTypeSymbol(Symbol):
             name=self.name,
         )
 
+class IO_Symbol(Symbol):
+    def __init__(self, name, formal_params=None):
+        super().__init__(name)
+        # a list of VarSymbol objects
+        self.formal_params = [] if formal_params is None else formal_params
+
+    def __str__(self):
+        return '<{class_name}(operation={name}, parameters={params})>'.format(
+            class_name=self.__class__.__name__,
+            name=self.name.op,
+            params=self.formal_params,
+        )
+
+    __repr__ = __str__
 
 class ProcedureSymbol(Symbol):
     def __init__(self, name, formal_params=None):
@@ -999,8 +1069,11 @@ class SemanticAnalyzer(NodeVisitor):
         type_name = node.value
 
     def visit_IO(self, node):
+        #TODO: seprarte read and write stuff
         param = node.value
         op = node.op
+        IO_Symbol(op, param)
+        self.current_scope.insert(op)
 
 
 
@@ -1107,6 +1180,26 @@ class SemanticAnalyzer(NodeVisitor):
         proc_symbol = self.current_scope.lookup(node.proc_name)
         # accessed by the interpreter when executing procedure call
         node.proc_symbol = proc_symbol
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ###############################################################################
@@ -1228,7 +1321,11 @@ class Interpreter(NodeVisitor):
     def visit_IO(self, node):
         param = node.value
         op = node.op
-        self.log(f'{str(op).strip("TokenType.")} ---> {param}\n')
+        #return param, op
+        if  node.op == TokenType.WRITELN:
+            self.log(f'{str(op).strip("TokenType.")} ---> {param} \\n \n')
+        else:
+            self.log(f'{str(op).strip("TokenType.")} ---> {param}\n')
 
 
     def visit_BinOp(self, node):
