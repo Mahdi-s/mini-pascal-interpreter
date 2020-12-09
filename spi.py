@@ -227,6 +227,19 @@ class Lexer:
             print("Token = "+str(token))
             return token
 
+    def char_builder(self):
+        """Handles building chars"""
+        # Create a new token with current line and column number
+        token = Token(type=None, value=None, lineno=self.lineno, column=self.column)
+        char = ''
+
+        char += self.current_char
+        token.type = TokenType.CHAR_CONST
+        token.value = char
+        self.advance()
+
+        return token
+
 
 
     def _id(self):
@@ -236,6 +249,13 @@ class Lexer:
         token = Token(type=None, value=None, lineno=self.lineno, column=self.column)
 
         value = ''
+
+        # if self.current_char.i() and not (self.look_at_next_char().isalnum() or self.look_at_next_char().isalpha()):
+        #     token.type = TokenType.CHAR_CONST
+        #     token.value = value
+        #     print(token)
+        #     return token
+
         while self.current_char is not None and self.current_char.isalnum():
             value += self.current_char
             self.advance()
@@ -254,6 +274,19 @@ class Lexer:
     def get_next_token(self):
 
         while self.current_char is not None:
+
+            if self.current_char == ':' and self.look_at_next_char() == '=':
+                token = Token(
+                    type=TokenType.ASSIGN,
+                    value=TokenType.ASSIGN.value,  # ':='
+                    lineno=self.lineno,
+                    column=self.column,
+                )
+                self.advance()
+                self.advance()
+                print("TK = " + str(token))
+                return token
+
             if self.current_char.isspace():
                 self.skip_whitespace()
                 continue
@@ -275,17 +308,6 @@ class Lexer:
             if self.current_char.isdigit():
                 return self.number()
 
-            if self.current_char == ':' and self.look_at_next_char() == '=':
-                token = Token(
-                    type=TokenType.ASSIGN,
-                    value=TokenType.ASSIGN.value,  # ':='
-                    lineno=self.lineno,
-                    column=self.column,
-                )
-                self.advance()
-                self.advance()
-                print("TK = " + str(token))
-                return token
 
             # for single-character token
             try:
@@ -359,6 +381,15 @@ class IO(AST):
         self.value = tk.value
         self.token = self.op = op
 
+class WRITE(AST):
+    def __init__(self, op, tk):
+        self.value = tk.value
+        self.token = self.op = op
+
+class READ(AST):
+    def __init__(self, op, tk):
+        self.value = tk
+        self.token = self.op = op
 
 class UnaryOp(AST):
     def __init__(self, op, expr):
@@ -588,10 +619,10 @@ class Parser:
             self.eat(TokenType.INTEGER)
         elif self.current_token.type == TokenType.REAL:
             self.eat(TokenType.REAL)
-        elif self.current_token.type == TokenType.CHAR:
-            self.eat(TokenType.CHAR)
         elif self.current_token.type == TokenType.STRING_CONST:
             self.eat(TokenType.STRING_CONST)
+        elif self.current_token.type == TokenType.CHAR:
+            self.eat(TokenType.CHAR)
         # else:
         #     self.eat(TokenType.REAL)
         node = Type(token)
@@ -627,7 +658,7 @@ class Parser:
         return results
 
 
-    def get_io_parameter(self, io):
+    def get_write_parameter(self, io):
         #TODO: Change it so read and readln take in parameters
         if not self.current_token.type == TokenType.STRING_CONST:
             return []
@@ -641,40 +672,65 @@ class Parser:
 
         return node
 
+    def read_parameters(self):
+        """ formal_parameters : ID (COMMA ID)* """
+        param_nodes = []
+
+        param_tokens = [self.current_token]
+        self.eat(TokenType.ID)
+        while self.current_token.type == TokenType.COMMA:
+            self.eat(TokenType.COMMA)
+            param_tokens.append(self.current_token)
+            self.eat(TokenType.ID)
+
+        return param_tokens
+
+    def get_read_parameter(self, io):
+        if not self.current_token.type == TokenType.ID:
+            return []
+
+        param_nodes = self.read_parameters()
+        print(param_nodes)
+        while self.current_token.type == TokenType.SEMI:
+            self.eat(TokenType.SEMI)
+            param_nodes.extend(self.formal_parameters())
+
+        return param_nodes
+
 
     def io_statement(self):
-        """ IOStatement --> read '(' Param ')'
-                        | readln [ '(' Param ')' ]
-                        | write '(' Param ')'
-                        | writeln [ '(' Param ')' ]
+        """ IO Statement --> read '(' Param ')'
+                          | readln  '(' Param ')'
+                          | write '(' 'String' ')'
+                          | writeln  '(' 'String' ')'
         """
         if self.current_token.type == TokenType.READ:
             read_tk = TokenType.READ
             self.eat(TokenType.READ)
             self.eat(TokenType.LPAREN)
-            formal_params = self.get_io_parameter(read_tk)
-            node = IO(read_tk, formal_params)
+            formal_params = self.get_read_parameter(read_tk)
+            node = READ(read_tk, formal_params)
             self.eat(TokenType.RPAREN)
         elif self.current_token.type == TokenType.READLN:
             readln_tk = TokenType.READLN
             self.eat(TokenType.READLN)
             self.eat(TokenType.LPAREN)
-            formal_params = self.get_io_parameter(readln_tk)
-            node = IO(readln_tk, formal_params)
+            formal_params = self.get_read_parameter(readln_tk)
+            node = READ(readln_tk, formal_params)
             self.eat(TokenType.RPAREN)
         elif self.current_token.type == TokenType.WRITE:
             write_tk = TokenType.WRITE
             self.eat(TokenType.WRITE)
             self.eat(TokenType.LPAREN)
-            formal_params = self.get_io_parameter(write_tk)
-            node = IO(write_tk, formal_params)
+            formal_params = self.get_write_parameter(write_tk)
+            node = WRITE(write_tk, formal_params)
             self.eat(TokenType.RPAREN)
         elif self.current_token.type == TokenType.WRITELN:
             writeln_tk = TokenType.WRITELN
             self.eat(TokenType.WRITELN)
             self.eat(TokenType.LPAREN)
-            formal_params = self.get_io_parameter(writeln_tk)
-            node = IO(writeln_tk, formal_params)
+            formal_params = self.get_write_parameter(writeln_tk)
+            node = WRITE(writeln_tk, formal_params)
             self.eat(TokenType.RPAREN)
         else:
             raise Exception('no match in io_statement')
@@ -776,7 +832,6 @@ class Parser:
     def term(self):
         """term : factor ((MUL | INTEGER_DIV | FLOAT_DIV) factor)*"""
         node = self.factor()
-
         while self.current_token.type in (
                 TokenType.MUL,
                 TokenType.INTEGER_DIV,
@@ -801,6 +856,7 @@ class Parser:
                   | REAL_CONST
                   | LPAREN expr RPAREN
                   | variable
+                  | STRING_CONST
         """
         token = self.current_token
         if token.type == TokenType.PLUS:
@@ -813,6 +869,8 @@ class Parser:
             return node
         elif token.type == TokenType.INTEGER_CONST:
             self.eat(TokenType.INTEGER_CONST)
+            print("loool")
+            print(token)
             return Num(token)
         elif token.type == TokenType.REAL_CONST:
             self.eat(TokenType.REAL_CONST)
@@ -822,6 +880,11 @@ class Parser:
             node = self.expr()
             self.eat(TokenType.RPAREN)
             return node
+        elif token.type == TokenType.STRING_CONST:
+            self.eat(TokenType.STRING_CONST)
+            print("lol")
+            print(token)
+            return Str(token)
         else:
             node = self.variable()
             return node
@@ -1075,6 +1138,19 @@ class SemanticAnalyzer(NodeVisitor):
         IO_Symbol(op, param)
         self.current_scope.insert(op)
 
+    def visit_READ(self, node):
+        #TODO: seprarte read and write stuff
+        param = node.value
+        op = node.op
+        IO_Symbol(op, param)
+        self.current_scope.insert(op)
+
+    def visit_WRITE(self, node):
+        #TODO: seprarte read and write stuff
+        param = node.value
+        op = node.op
+        IO_Symbol(op, param)
+        self.current_scope.insert(op)
 
 
     def visit_Program(self, node):
@@ -1141,7 +1217,6 @@ class SemanticAnalyzer(NodeVisitor):
     def visit_VarDecl(self, node):
         type_name = node.type_node.value
         type_symbol = self.current_scope.lookup(type_name)
-
 
         var_name = node.var_node.value
         var_symbol = VarSymbol(var_name, type_symbol)
@@ -1316,16 +1391,26 @@ class Interpreter(NodeVisitor):
 
     def visit_Str(self, node):
         type_name = node.value
+        return type_name
         #io_sym = self.visit(node.left)
 
-    def visit_IO(self, node):
+    def visit_WRITE(self, node):
         param = node.value
         op = node.op
         #return param, op
         if  node.op == TokenType.WRITELN:
-            self.log(f'{str(op).strip("TokenType.")} ---> {param} \\n \n')
+            self.log(f'{str(op).strip("TokenType.")} -> {param} \\n \n')
         else:
-            self.log(f'{str(op).strip("TokenType.")} ---> {param}\n')
+            self.log(f'{str(op).strip("TokenType.")} -> {param}\n')
+
+    def visit_READ(self, node):
+        param = node.value
+        op = node.op
+        #return param, op
+        if  node.op == TokenType.READLN:
+            self.log(f'{str(op).strip("TokenType.")} -> {param} \\n \n')
+        else:
+            self.log(f'{str(op).strip("TokenType.")} -> {param}\n')
 
 
     def visit_BinOp(self, node):
