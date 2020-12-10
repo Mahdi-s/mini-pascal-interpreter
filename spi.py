@@ -4,6 +4,8 @@ from enum import Enum
 
 _SHOULD_LOG_SCOPE = False  # see '--scope' command line option
 _SHOULD_LOG_STACK = False  # see '--stack' command line option
+_SHOULD_LOG_LEXER = False  # see '--lexer' command line option
+_SHOULD_LOG_VISITOR = False # see '--visitor' command line option
 
 
 
@@ -144,6 +146,12 @@ class Lexer:
         self.lineno = 1
         self.column = 1
 
+
+    def log(self, msg):
+        if _SHOULD_LOG_LEXER:
+            print(msg)
+
+
     def error(self):
         s = "Lexer error on '{lexeme}' line: {lineno} column: {column}".format(
             lexeme=self.current_char,
@@ -192,7 +200,7 @@ class Lexer:
             result += self.current_char
             self.advance()
 
-        if self.current_char == '.':
+        if self.current_char == '.' and not self.look_at_next_char() == '.':
             result += self.current_char
             self.advance()
 
@@ -205,7 +213,7 @@ class Lexer:
         else:
             token.type = TokenType.INTEGER_CONST
             token.value = int(result)
-        print("NUM = " + str(token))
+        self.log(f'Number : {token}')
         return token
 
 
@@ -224,7 +232,7 @@ class Lexer:
             self.quote_count = 0
             token.type = TokenType.STRING_CONST
             token.value = result
-            print("Token = "+str(token))
+            self.log(f'Token : {token}')
             return token
 
     def char_builder(self):
@@ -268,7 +276,7 @@ class Lexer:
             # reserved keyword
             token.type = token_type
             token.value = value.upper()
-        print("ID = " + str(token))
+        self.log(f'ID : {token}')
         return token
 
     def get_next_token(self):
@@ -284,7 +292,7 @@ class Lexer:
                 )
                 self.advance()
                 self.advance()
-                print("TK = " + str(token))
+                self.log(f'Token : {token}')
                 return token
 
             if self.current_char.isspace():
@@ -324,7 +332,7 @@ class Lexer:
                     column=self.column,
                 )
                 self.advance()
-                print("TK = " + str(token))
+                self.log(f'Token : {token}')
                 return token
 
         # EOF (end-of-file) token indicates that there is no more
@@ -376,6 +384,13 @@ class Str(AST):
         self.token = token
         self.value = token.value
 
+class Relation(AST):
+    def __init__(self, left, token, right):
+        self.left = left
+        self.token = token
+        self.right = right
+
+
 class IO(AST):
     def __init__(self, op, tk):
         self.value = tk.value
@@ -396,7 +411,11 @@ class UnaryOp(AST):
         self.token = self.op = op
         self.expr = expr
 
-
+class Array(AST):
+    def __init__(self, start_len, end_len, type):
+        self.start = start_len
+        self.end = end_len
+        self.value = type.value
 
 class Compound(AST):
     """Represents a 'BEGIN ... END' block"""
@@ -440,6 +459,14 @@ class VarDecl(AST):
         self.type_node = type_node
 
 
+class ArrayDecl(AST):
+    def __init__(self, start_len, end_len, type_node):
+        self.start = start_len
+        self.end = end_len
+        self.token, self.type = type_node
+
+
+
 class Type(AST):
     def __init__(self, token):
         self.token = token
@@ -466,6 +493,15 @@ class ProcedureCall(AST):
         self.token = token
         # a reference to procedure declaration symbol
         self.proc_symbol = None
+
+class IfStatement(AST):
+    #TODO: Needs Work
+    def __init__(self, expr, statement, else_statement=None):
+        self.expr = expr
+        self.statement = statement  # a list of AST nodes
+        self.elseStatement = else_statement
+        # a reference to procedure declaration symbol
+        self.proc_symbol = 'IF'
 
 
 class Parser:
@@ -608,11 +644,11 @@ class Parser:
         return proc_decl
 
     def type_spec(self):
-        #TODO: Add char type
         """type_spec : INTEGER
                      | REAL
-                     | CHAR
                      | STRING_CONST
+                     | CHAR
+                     | ARRAY
         """
         token = self.current_token
         if self.current_token.type == TokenType.INTEGER:
@@ -623,8 +659,22 @@ class Parser:
             self.eat(TokenType.STRING_CONST)
         elif self.current_token.type == TokenType.CHAR:
             self.eat(TokenType.CHAR)
-        # else:
-        #     self.eat(TokenType.REAL)
+        elif self.current_token.type == TokenType.ARRAY:
+            self.eat(TokenType.ARRAY)
+            self.eat(TokenType.LBRACK)
+            Start_len = self.current_token.value
+            self.eat(TokenType.INTEGER_CONST)
+            self.eat(TokenType.DOT)
+            self.eat(TokenType.DOT)
+            End_len = self.current_token.value
+            self.eat(TokenType.INTEGER_CONST)
+            self.eat(TokenType.RBRACK)
+            self.eat(TokenType.OF)
+            if self.current_token.type == TokenType.INTEGER:
+                type = TokenType.INTEGER
+                self.eat(TokenType.INTEGER)
+            array = Array(Start_len, End_len, type)
+            return array
         node = Type(token)
         return node
 
@@ -690,7 +740,6 @@ class Parser:
             return []
 
         param_nodes = self.read_parameters()
-        print(param_nodes)
         while self.current_token.type == TokenType.SEMI:
             self.eat(TokenType.SEMI)
             param_nodes.extend(self.formal_parameters())
@@ -746,6 +795,7 @@ class Parser:
                   | proccall_statement
                   | assignment_statement
                   | io_statement
+                  | IF, IF/ELSE
                   | empty
         """
         if self.current_token.type == TokenType.BEGIN:
@@ -759,9 +809,27 @@ class Parser:
 
         elif self.current_token.type == TokenType.WRITELN or self.current_token.type == TokenType.WRITE or self.current_token.type == TokenType.READ or self.current_token.type == TokenType.READLN:
             node = self.io_statement()
+        elif self.current_token.type == TokenType.IF:
+            node = self.if_statement()
         else:
             node = self.empty()
         return node
+
+
+    def if_statement(self):
+        """IF/ELSE statement: If expr THEN Statement [ELSE Statement]"""
+        if self.current_token.type == TokenType.IF:
+            self.eat(TokenType.IF)
+            expr = self.relation_statement()
+            self.eat(TokenType.THEN)
+            statement = self.statement()
+            if self.current_token.type == TokenType.ELSE:
+                self.eat(TokenType.ELSE)
+                else_statement = self.statement()
+                node = IfStatement(expr, statement, else_statement)
+                return node
+            node = IfStatement(expr, statement, )
+            return node
 
     def proccall_statement(self):
         """proccall_statement : ID LPAREN (expr (COMMA expr)*)? RPAREN"""
@@ -800,6 +868,31 @@ class Parser:
         node = Assign(left, token, right)
         return node
 
+    def relation_statement(self):
+        """
+        assignment_statement : variable relation expr
+        = , > , < , >= , <=
+        """
+        left = self.variable()
+        token = self.current_token
+
+        if self.current_token.type == TokenType.EQUAL:
+            self.eat(TokenType.EQUAL)
+        elif self.current_token.type == TokenType.LESS:
+            self.eat(TokenType.LESS)
+        elif self.current_token.type == TokenType.GREATER:
+            self.eat(TokenType.GREATER)
+        elif self.current_token.type == TokenType.LESSEQUAL:
+            self.eat(TokenType.LESSEQUAL)
+        elif self.current_token.type == TokenType.GREATEREQUAL:
+            self.eat(TokenType.GREATEREQUAL)
+        else:
+            raise Exception('no match in relation_statement')
+
+        right = self.expr()
+        node = Relation(left, token, right)
+        return node
+
     def variable(self):
         """
         variable : ID
@@ -816,8 +909,8 @@ class Parser:
         """
         expr : term ((PLUS | MINUS) term)*
         """
+        #TODO: add boolean expr
         node = self.term()
-
         while self.current_token.type in (TokenType.PLUS, TokenType.MINUS):
             token = self.current_token
             if token.type == TokenType.PLUS:
@@ -857,6 +950,7 @@ class Parser:
                   | LPAREN expr RPAREN
                   | variable
                   | STRING_CONST
+                  | EQUAL
         """
         token = self.current_token
         if token.type == TokenType.PLUS:
@@ -869,8 +963,6 @@ class Parser:
             return node
         elif token.type == TokenType.INTEGER_CONST:
             self.eat(TokenType.INTEGER_CONST)
-            print("loool")
-            print(token)
             return Num(token)
         elif token.type == TokenType.REAL_CONST:
             self.eat(TokenType.REAL_CONST)
@@ -882,9 +974,10 @@ class Parser:
             return node
         elif token.type == TokenType.STRING_CONST:
             self.eat(TokenType.STRING_CONST)
-            print("lol")
-            print(token)
             return Str(token)
+        # elif token.type == TokenType.EQUAL:
+        #     self.eat(TokenType.EQUAL)
+        #     return Equal(token)
         else:
             node = self.variable()
             return node
@@ -957,6 +1050,7 @@ class Parser:
 
 class NodeVisitor:
     def visit(self, node):
+        #self.log(f'Visit: {node}')
         method_name = 'visit_' + type(node).__name__
         visitor = getattr(self, method_name, self.generic_visit)
         return visitor(node)
@@ -965,7 +1059,9 @@ class NodeVisitor:
         raise Exception('No visit_{} method'.format(type(node).__name__))
 
 
-
+    def log(self, msg):
+        if _SHOULD_LOG_VISITOR:
+            print(msg)
 
 
 
@@ -1032,6 +1128,21 @@ class IO_Symbol(Symbol):
 
     __repr__ = __str__
 
+
+class ARRAY_Symbol(Symbol):
+    def __init__(self, start_len, end_len, type):
+        super().__init__(name)
+
+    def __str__(self):
+        return '<{class_name}(Start_len={name}, End_len={params})>'.format(
+            class_name=self.__class__.__name__,
+            type=self.type,
+            start=self.start_len,
+            end= self.end_len
+        )
+
+    __repr__ = __str__
+
 class ProcedureSymbol(Symbol):
     def __init__(self, name, formal_params=None):
         super().__init__(name)
@@ -1061,6 +1172,8 @@ class ScopedSymbolTable:
         self.insert(BuiltinTypeSymbol('INTEGER'))
         self.insert(BuiltinTypeSymbol('REAL'))
         self.insert(BuiltinTypeSymbol('STRING_CONST'))
+        self.insert(BuiltinTypeSymbol('ARRAY'))
+
 
     def __str__(self):
         h1 = 'SCOPE (SCOPED SYMBOL TABLE)'
@@ -1132,21 +1245,18 @@ class SemanticAnalyzer(NodeVisitor):
         type_name = node.value
 
     def visit_IO(self, node):
-        #TODO: seprarte read and write stuff
         param = node.value
         op = node.op
         IO_Symbol(op, param)
         self.current_scope.insert(op)
 
     def visit_READ(self, node):
-        #TODO: seprarte read and write stuff
         param = node.value
         op = node.op
         IO_Symbol(op, param)
         self.current_scope.insert(op)
 
     def visit_WRITE(self, node):
-        #TODO: seprarte read and write stuff
         param = node.value
         op = node.op
         IO_Symbol(op, param)
@@ -1169,7 +1279,7 @@ class SemanticAnalyzer(NodeVisitor):
         self.log(global_scope)
 
         self.current_scope = self.current_scope.enclosing_scope
-        self.log('LEAVE scope: global')
+        self.log('LEAVE scope: global \n')
 
     def visit_Compound(self, node):
         for child in node.children:
@@ -1230,6 +1340,22 @@ class SemanticAnalyzer(NodeVisitor):
 
         self.current_scope.insert(var_symbol)
 
+    # def visit_ARRAY(self, node):
+    #     type_name = node.type_node.value
+    #     type_symbol = self.current_scope.lookup(type_name)
+    #
+    #     var_name = node.var_node.value
+    #     var_symbol = VarSymbol(var_name, type_symbol)
+    #
+    #     # Signal an error if the table already has a symbol with the same name
+    #     if self.current_scope.lookup(var_name, current_scope_only=True):
+    #         self.error(
+    #             error_code=ErrorCode.DUPLICATE_ID,
+    #             token=node.var_node.token,
+    #         )
+    #
+    #     self.current_scope.insert(var_symbol)
+
     def visit_Assign(self, node):
         # right-hand side
         self.visit(node.right)
@@ -1255,6 +1381,11 @@ class SemanticAnalyzer(NodeVisitor):
         proc_symbol = self.current_scope.lookup(node.proc_name)
         # accessed by the interpreter when executing procedure call
         node.proc_symbol = proc_symbol
+
+
+    def visit_IfStatement(self, node):
+        #TODO: Implement If Else logic
+        pass
 
 
 
@@ -1287,7 +1418,6 @@ class SemanticAnalyzer(NodeVisitor):
 class ARType(Enum):
     PROGRAM   = 'PROGRAM'
     PROCEDURE = 'PROCEDURE'
-    IO = 'IO'
 
 
 class CallStack:
@@ -1490,6 +1620,10 @@ class Interpreter(NodeVisitor):
 
         self.call_stack.pop()
 
+    def visit_IfStatement(self, node):
+        #TODO: Implement If Else logic
+        pass
+
     def interpret(self):
         tree = self.tree
         if tree is None:
@@ -1512,10 +1646,20 @@ def main():
         help='Print call stack',
         action='store_true',
     )
+    parser.add_argument(
+        '--lexer',
+        help='Print lexer tokens',
+        action='store_true',
+    )
+    parser.add_argument(
+        '--visitor',
+        help='Print lexer tokens',
+        action='store_true',
+    )
     args = parser.parse_args()
 
-    global _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK
-    _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK = args.scope, args.stack
+    global _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK, _SHOULD_LOG_LEXER, _SHOULD_LOG_VISITOR
+    _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK, _SHOULD_LOG_LEXER, _SHOULD_LOG_VISITOR  = args.scope, args.stack, args.lexer, args.visitor
 
     text = open(args.inputfile, 'r').read()
 
