@@ -495,13 +495,18 @@ class ProcedureCall(AST):
         self.proc_symbol = None
 
 class IfStatement(AST):
-    #TODO: Needs Work
-    def __init__(self, expr, statement, else_statement=None):
+    def __init__(self, token,expr, statement, else_statement=None):
+        self.name = token
         self.expr = expr
-        self.statement = statement  # a list of AST nodes
+        self.statement = statement
         self.elseStatement = else_statement
-        # a reference to procedure declaration symbol
-        self.proc_symbol = 'IF'
+
+class WhileStatement(AST):
+    def __init__(self, token, expr, statement):
+        self.name = token
+        self.expr = expr
+        self.statement = statement
+
 
 
 class Parser:
@@ -795,7 +800,7 @@ class Parser:
                   | proccall_statement
                   | assignment_statement
                   | io_statement
-                  | IF, IF/ELSE
+                  | IF, IF/ELSE, WHILE
                   | empty
         """
         if self.current_token.type == TokenType.BEGIN:
@@ -811,25 +816,38 @@ class Parser:
             node = self.io_statement()
         elif self.current_token.type == TokenType.IF:
             node = self.if_statement()
+        elif self.current_token.type == TokenType.WHILE:
+            node = self.while_statement()
         else:
             node = self.empty()
         return node
 
+    def while_statement(self):
+        """WHILE statement: while expr do Statement"""
+        token = self.current_token.type
+        self.eat(TokenType.WHILE)
+        expr = self.relation_statement()
+        self.eat(TokenType.DO)
+        statement = self.statement()
+        node = WhileStatement(token, expr, statement)
+        return node
+
+
 
     def if_statement(self):
         """IF/ELSE statement: If expr THEN Statement [ELSE Statement]"""
-        if self.current_token.type == TokenType.IF:
-            self.eat(TokenType.IF)
-            expr = self.relation_statement()
-            self.eat(TokenType.THEN)
-            statement = self.statement()
-            if self.current_token.type == TokenType.ELSE:
-                self.eat(TokenType.ELSE)
-                else_statement = self.statement()
-                node = IfStatement(expr, statement, else_statement)
-                return node
-            node = IfStatement(expr, statement, )
+        token = self.current_token.type
+        self.eat(TokenType.IF)
+        expr = self.relation_statement()
+        self.eat(TokenType.THEN)
+        statement = self.statement()
+        if self.current_token.type == TokenType.ELSE:
+            self.eat(TokenType.ELSE)
+            else_statement = self.statement()
+            node = IfStatement(token ,expr, statement, else_statement)
             return node
+        node = IfStatement(token, expr, statement, )
+        return node
 
     def proccall_statement(self):
         """proccall_statement : ID LPAREN (expr (COMMA expr)*)? RPAREN"""
@@ -871,9 +889,9 @@ class Parser:
     def relation_statement(self):
         """
         assignment_statement : variable relation expr
-        = , > , < , >= , <=
+        = , > , < , >= , <=, AND, OR
         """
-        left = self.variable()
+        left = self.expr()
         token = self.current_token
 
         if self.current_token.type == TokenType.EQUAL:
@@ -886,6 +904,10 @@ class Parser:
             self.eat(TokenType.LESSEQUAL)
         elif self.current_token.type == TokenType.GREATEREQUAL:
             self.eat(TokenType.GREATEREQUAL)
+        elif self.current_token.type == TokenType.AND:
+            self.eat(TokenType.AND)
+        elif self.current_token.type == TokenType.OR:
+            self.eat(TokenType.OR)
         else:
             raise Exception('no match in relation_statement')
 
@@ -1050,7 +1072,6 @@ class Parser:
 
 class NodeVisitor:
     def visit(self, node):
-        #self.log(f'Visit: {node}')
         method_name = 'visit_' + type(node).__name__
         visitor = getattr(self, method_name, self.generic_visit)
         return visitor(node)
@@ -1139,6 +1160,31 @@ class ARRAY_Symbol(Symbol):
             type=self.type,
             start=self.start_len,
             end= self.end_len
+        )
+
+    __repr__ = __str__
+
+class IF_Symbol(Symbol):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def __str__(self):
+        return '<{class_name}(name={name})>'.format(
+            class_name=self.__class__.__name__,
+            name=self.name
+        )
+
+    __repr__ = __str__
+
+
+class WHILE_Symbol(Symbol):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def __str__(self):
+        return '<{class_name}(name={name})>'.format(
+            class_name=self.__class__.__name__,
+            name=self.name
         )
 
     __repr__ = __str__
@@ -1340,21 +1386,8 @@ class SemanticAnalyzer(NodeVisitor):
 
         self.current_scope.insert(var_symbol)
 
-    # def visit_ARRAY(self, node):
-    #     type_name = node.type_node.value
-    #     type_symbol = self.current_scope.lookup(type_name)
-    #
-    #     var_name = node.var_node.value
-    #     var_symbol = VarSymbol(var_name, type_symbol)
-    #
-    #     # Signal an error if the table already has a symbol with the same name
-    #     if self.current_scope.lookup(var_name, current_scope_only=True):
-    #         self.error(
-    #             error_code=ErrorCode.DUPLICATE_ID,
-    #             token=node.var_node.token,
-    #         )
-    #
-    #     self.current_scope.insert(var_symbol)
+    def visit_ARRAY(self, node):
+        pass
 
     def visit_Assign(self, node):
         # right-hand side
@@ -1384,8 +1417,15 @@ class SemanticAnalyzer(NodeVisitor):
 
 
     def visit_IfStatement(self, node):
-        #TODO: Implement If Else logic
-        pass
+        name = node.name
+        symbol = IF_Symbol(name)
+        self.current_scope.insert(symbol)
+
+    def visit_WhileStatement(self, node):
+        name = node.name
+        symbol = IF_Symbol(name)
+        self.current_scope.insert(symbol)
+
 
 
 
@@ -1418,6 +1458,7 @@ class SemanticAnalyzer(NodeVisitor):
 class ARType(Enum):
     PROGRAM   = 'PROGRAM'
     PROCEDURE = 'PROCEDURE'
+    IfStatement = 'IfStatement'
 
 
 class CallStack:
@@ -1488,7 +1529,6 @@ class Interpreter(NodeVisitor):
     def visit_Program(self, node):
         program_name = node.name
         self.log(f'ENTER: PROGRAM {program_name}')
-
         ar = ActivationRecord(
             name=program_name,
             type=ARType.PROGRAM,
@@ -1522,7 +1562,6 @@ class Interpreter(NodeVisitor):
     def visit_Str(self, node):
         type_name = node.value
         return type_name
-        #io_sym = self.visit(node.left)
 
     def visit_WRITE(self, node):
         param = node.value
@@ -1620,15 +1659,140 @@ class Interpreter(NodeVisitor):
 
         self.call_stack.pop()
 
+
     def visit_IfStatement(self, node):
-        #TODO: Implement If Else logic
-        pass
+        # If part
+        left_value = self.visit(node.expr.left)
+        token = str(node.expr.token.type)
+        right = node.expr.right.value
+        # then Part
+        # ar = self.call_stack.look_at_next_char()
+        # print(ar)
+        if token == 'TokenType.EQUAL':
+            if left_value == right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+            else:
+                #else part
+                left_value_else = node.elseStatement.left.value
+                token_else = node.elseStatement.token.type
+                right_else = node.elseStatement.right.value
+                self.log(f'{left_value_else}  : {right_else}')
+
+        if token == 'TokenType.LESS':
+            if left_value < right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+            else:
+                #else part
+                left_value_else = node.elseStatement.left.value
+                token_else = node.elseStatement.token.type
+                right_else = node.elseStatement.right.value
+                self.log(f'{left_value_else}  : {right_else}')
+
+        if token == 'TokenType.LESSEQUAL':
+            if left_value <= right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+            else:
+                #else part
+                left_value_else = node.elseStatement.left.value
+                token_else = node.elseStatement.token.type
+                right_else = node.elseStatement.right.value
+                self.log(f'{left_value_else}  : {right_else}')
+
+        if token == 'TokenType.GREATER':
+            if left_value > right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+            else:
+                #else part
+                left_value_else = node.elseStatement.left.value
+                token_else = node.elseStatement.token.type
+                right_else = node.elseStatement.right.value
+                self.log(f'{left_value_else}  : {right_else}')
+
+        if token == 'TokenType.GREATEREQUAL':
+            if left_value >= right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+            else:
+                #else part
+                left_value_else = node.elseStatement.left.value
+                token_else = node.elseStatement.token.type
+                right_else = node.elseStatement.right.value
+                self.log(f'{left_value_else}  : {right_else}')
+
+
+    def visit_WhileStatement(self, node):
+        # While
+        left_value = self.visit(node.expr.left)
+        token = str(node.expr.token.type)
+        right = node.expr.right.value
+        # Do
+        if token == 'TokenType.EQUAL':
+            if left_value == right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+
+        if token == 'TokenType.GREATER':
+            if left_value > right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+
+        if token == 'TokenType.GREATEREQUAL':
+            if left_value >= right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+
+        if token == 'TokenType.LESS':
+            if left_value < right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
+
+        if token == 'TokenType.LESSEQUAL':
+            if left_value <= right:
+                left_value_then = node.statement.left.value
+                token_then = node.statement.token.type
+                right_then = node.statement.right.value
+                self.log(f'{left_value_then}  : {right_then}')
 
     def interpret(self):
         tree = self.tree
         if tree is None:
             return ''
         return self.visit(tree)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def main():
