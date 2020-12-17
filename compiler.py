@@ -6,7 +6,7 @@ _SHOULD_LOG_SCOPE = False  # see '--scope' command line option
 _SHOULD_LOG_STACK = False  # see '--stack' command line option
 _SHOULD_LOG_LEXER = False  # see '--lexer' command line option
 _SHOULD_LOG_VISITOR = False # see '--visitor' command line option
-
+_SHOULD_LOG_MIPS = False # see '--mips' command line option
 
 
 class ErrorCode(Enum):
@@ -412,10 +412,11 @@ class UnaryOp(AST):
         self.expr = expr
 
 class Array(AST):
-    def __init__(self, start_len, end_len, type):
+    def __init__(self, start_len, end_len, type, members = []):
         self.start = start_len
         self.end = end_len
         self.value = type.value
+        self.members = members
 
 class Compound(AST):
     """Represents a 'BEGIN ... END' block"""
@@ -428,6 +429,14 @@ class Assign(AST):
         self.left = left
         self.token = self.op = op
         self.right = right
+
+
+# class Array_Assign(AST):
+#     def __init__(self, left, op, array_place,right):
+#         self.left = left
+#         self.token = self.op = op
+#         self.location = array_place
+#         self.right = right
 
 
 class Var(AST):
@@ -457,13 +466,6 @@ class VarDecl(AST):
     def __init__(self, var_node, type_node):
         self.var_node = var_node
         self.type_node = type_node
-
-
-class ArrayDecl(AST):
-    def __init__(self, start_len, end_len, type_node):
-        self.start = start_len
-        self.end = end_len
-        self.token, self.type = type_node
 
 
 
@@ -656,6 +658,7 @@ class Parser:
                      | ARRAY
         """
         token = self.current_token
+        members = [] #TODO: grab members of array
         if self.current_token.type == TokenType.INTEGER:
             self.eat(TokenType.INTEGER)
         elif self.current_token.type == TokenType.REAL:
@@ -678,7 +681,7 @@ class Parser:
             if self.current_token.type == TokenType.INTEGER:
                 type = TokenType.INTEGER
                 self.eat(TokenType.INTEGER)
-            array = Array(Start_len, End_len, type)
+            array = Array(Start_len, End_len, type, members)
             return array
         node = Type(token)
         return node
@@ -881,6 +884,16 @@ class Parser:
         """
         left = self.variable()
         token = self.current_token
+        # for array assign
+        if token.value == '[':
+            self.eat(TokenType.LBRACK)
+            Array_Place = self.current_token
+            self.eat(TokenType.INTEGER_CONST)
+            self.eat(TokenType.RBRACK)
+            self.eat(TokenType.ASSIGN)
+            right = self.expr()
+            node = Assign(left, token, right)
+            return node
         self.eat(TokenType.ASSIGN)
         right = self.expr()
         node = Assign(left, token, right)
@@ -1151,15 +1164,16 @@ class IO_Symbol(Symbol):
 
 
 class ARRAY_Symbol(Symbol):
-    def __init__(self, start_len, end_len, type):
+    def __init__(self, start_len, end_len, type, members = []):
         super().__init__(name)
 
     def __str__(self):
-        return '<{class_name}(Start_len={name}, End_len={params})>'.format(
+        return '<{class_name}(Type={type}, Start_len={start}, End_len={end}, members ={members})>'.format(
             class_name=self.__class__.__name__,
             type=self.type,
             start=self.start_len,
-            end= self.end_len
+            end= self.end_len,
+            members = self.members
         )
 
     __repr__ = __str__
@@ -1387,13 +1401,20 @@ class SemanticAnalyzer(NodeVisitor):
         self.current_scope.insert(var_symbol)
 
     def visit_ARRAY(self, node):
-        pass
+        start = node.start
+        end = node.end
+        type = node.value
+        members = node.members
+        symbol = ARRAY_Symbol(start,end,type,members)
+        self.current_scope.insert(symbol)
+
 
     def visit_Assign(self, node):
         # right-hand side
         self.visit(node.right)
         # left-hand side
         self.visit(node.left)
+
 
     def visit_Var(self, node):
         var_name = node.value
@@ -1458,7 +1479,6 @@ class SemanticAnalyzer(NodeVisitor):
 class ARType(Enum):
     PROGRAM   = 'PROGRAM'
     PROCEDURE = 'PROCEDURE'
-    IfStatement = 'IfStatement'
 
 
 class CallStack:
@@ -1489,6 +1509,8 @@ class ActivationRecord:
         self.type = type
         self.nesting_level = nesting_level
         self.members = {}
+        self.counter = 0
+
 
     def __setitem__(self, key, value):
         self.members[key] = value
@@ -1499,6 +1521,10 @@ class ActivationRecord:
     def get(self, key):
         return self.members.get(key)
 
+    def log(self, msg):
+        if _SHOULD_LOG_MIPS:
+            print(msg)
+
     def __str__(self):
         lines = [
             '{level}: {type} {name}'.format(
@@ -1507,14 +1533,19 @@ class ActivationRecord:
                 name=self.name,
             )
         ]
+
         for name, val in self.members.items():
             lines.append(f'   {name:<20}: {val}')
-
+            self.log(f'li $t{self.counter}, {val}\n')
+            self.counter+=1
+            #machine_code_out(val)
         s = '\n'.join(lines)
         return s
 
+
     def __repr__(self):
         return self.__str__()
+
 
 
 class Interpreter(NodeVisitor):
@@ -1673,65 +1704,65 @@ class Interpreter(NodeVisitor):
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'IF Statement Result => {left_value_then}  : {right_then}\n')
             else:
                 #else part
                 left_value_else = node.elseStatement.left.value
                 token_else = node.elseStatement.token.type
                 right_else = node.elseStatement.right.value
-                self.log(f'{left_value_else}  : {right_else}')
+                self.log(f'IF Statement Result => {left_value_else}  : {right_else}\n')
 
         if token == 'TokenType.LESS':
             if left_value < right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'IF Statement Result => {left_value_then}  : {right_then}\n')
             else:
                 #else part
                 left_value_else = node.elseStatement.left.value
                 token_else = node.elseStatement.token.type
                 right_else = node.elseStatement.right.value
-                self.log(f'{left_value_else}  : {right_else}')
+                self.log(f'IF Statement Result => {left_value_else}  : {right_else}\n')
 
         if token == 'TokenType.LESSEQUAL':
             if left_value <= right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'IF Statement Result => {left_value_then}  : {right_then}\n')
             else:
                 #else part
                 left_value_else = node.elseStatement.left.value
                 token_else = node.elseStatement.token.type
                 right_else = node.elseStatement.right.value
-                self.log(f'{left_value_else}  : {right_else}')
+                self.log(f'IF Statement Result => {left_value_else}  : {right_else}\n')
 
         if token == 'TokenType.GREATER':
             if left_value > right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'IF Statement Result => {left_value_then}  : {right_then}\n')
             else:
                 #else part
                 left_value_else = node.elseStatement.left.value
                 token_else = node.elseStatement.token.type
                 right_else = node.elseStatement.right.value
-                self.log(f'{left_value_else}  : {right_else}')
+                self.log(f'IF Statement Result => {left_value_else}  : {right_else}\n')
 
         if token == 'TokenType.GREATEREQUAL':
             if left_value >= right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'IF Statement Result => {left_value_then}  : {right_then}\n')
             else:
                 #else part
                 left_value_else = node.elseStatement.left.value
                 token_else = node.elseStatement.token.type
                 right_else = node.elseStatement.right.value
-                self.log(f'{left_value_else}  : {right_else}')
+                self.log(f'IF Statement Result => {left_value_else}  : {right_else}\n')
 
 
     def visit_WhileStatement(self, node):
@@ -1745,35 +1776,35 @@ class Interpreter(NodeVisitor):
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'While Statement Result => {left_value_then}  : {right_then}\n')
 
         if token == 'TokenType.GREATER':
             if left_value > right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'While Statement Result => {left_value_then}  : {right_then}\n')
 
         if token == 'TokenType.GREATEREQUAL':
             if left_value >= right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'While Statement Result => {left_value_then}  : {right_then}\n')
 
         if token == 'TokenType.LESS':
             if left_value < right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'While Statement Result => {left_value_then}  : {right_then}\n')
 
         if token == 'TokenType.LESSEQUAL':
             if left_value <= right:
                 left_value_then = node.statement.left.value
                 token_then = node.statement.token.type
                 right_then = node.statement.right.value
-                self.log(f'{left_value_then}  : {right_then}')
+                self.log(f'While Statement Result => {left_value_then}  : {right_then}\n')
 
     def interpret(self):
         tree = self.tree
@@ -1820,10 +1851,15 @@ def main():
         help='Print lexer tokens',
         action='store_true',
     )
+    parser.add_argument(
+        '--mips',
+        help='Print lexer tokens',
+        action='store_true',
+    )
     args = parser.parse_args()
 
-    global _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK, _SHOULD_LOG_LEXER, _SHOULD_LOG_VISITOR
-    _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK, _SHOULD_LOG_LEXER, _SHOULD_LOG_VISITOR  = args.scope, args.stack, args.lexer, args.visitor
+    global _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK, _SHOULD_LOG_LEXER, _SHOULD_LOG_VISITOR, _SHOULD_LOG_MIPS
+    _SHOULD_LOG_SCOPE, _SHOULD_LOG_STACK, _SHOULD_LOG_LEXER, _SHOULD_LOG_VISITOR, _SHOULD_LOG_MIPS  = args.scope, args.stack, args.lexer, args.visitor, args.mips
 
     text = open(args.inputfile, 'r').read()
 
